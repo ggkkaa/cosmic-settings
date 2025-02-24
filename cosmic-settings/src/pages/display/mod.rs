@@ -4,32 +4,50 @@
 pub mod arrangement;
 // pub mod night_light;
 
-use crate::{app, pages};
+use crate::{ app, pages };
 use arrangement::Arrangement;
-use cosmic::iced::{time, Alignment, Length};
-use cosmic::iced_widget::scrollable::{Direction, RelativeOffset, Scrollbar};
+use ashpd::desktop::print;
+use cosmic::iced::{ time, Alignment, Length };
+use cosmic::iced_widget::scrollable::{ Direction, RelativeOffset, Scrollbar };
 use cosmic::widget::{
-    self, column, container, dropdown, list_column, segmented_button, tab_bar, text, toggler,
+    self,
+    column,
+    container,
+    dropdown,
+    list_column,
+    segmented_button,
+    tab_bar,
+    text,
+    toggler,
 };
-use cosmic::{Apply, Element, Task};
-use cosmic_config::{ConfigGet, ConfigSet};
+use cosmic::{ Apply, Element, Task };
+use cosmic_config::{ ConfigGet, ConfigSet };
 use cosmic_randr_shell::{
-    AdaptiveSyncAvailability, AdaptiveSyncState, List, Output, OutputKey, Transform,
+    AdaptiveSyncAvailability,
+    AdaptiveSyncState,
+    List,
+    Output,
+    OutputKey,
+    Transform,
 };
-use cosmic_settings_page::{self as page, section, Section};
+use cosmic_settings_page::{ self as page, section, Section };
 use futures::pin_mut;
 use once_cell::sync::Lazy;
+use ron::value::Float;
 use slab::Slab;
-use slotmap::{Key, SecondaryMap, SlotMap};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::{collections::BTreeMap, process::ExitStatus, sync::Arc};
+use slotmap::{ Key, SecondaryMap, SlotMap };
+use std::sync::atomic::{ AtomicBool, Ordering };
+use std::{ collections::BTreeMap, process::ExitStatus, sync::Arc };
 use tokio::sync::oneshot;
 use tracing::error;
 
 static DPI_SCALES: &[u32] = &[50, 75, 100, 125, 150, 175, 200, 225, 250, 275, 300];
 
-static DPI_SCALE_LABELS: Lazy<Vec<String>> =
-    Lazy::new(|| DPI_SCALES.iter().map(|scale| format!("{scale}%")).collect());
+static DPI_SCALE_LABELS: Lazy<Vec<String>> = Lazy::new(||
+    DPI_SCALES.iter()
+        .map(|scale| format!("{scale}%"))
+        .collect()
+);
 
 /// Display color depth options
 #[allow(dead_code)]
@@ -100,7 +118,7 @@ pub enum Message {
     /// Set the resolution of a display.
     Resolution(usize),
     /// Set the preferred scale for a display.
-    Scale(usize),
+    Scale(u32),
     /// Adjust the display scale.
     AdjustScale(u32),
     /// Refreshes display outputs.
@@ -159,8 +177,9 @@ pub struct Page {
 impl Default for Page {
     fn default() -> Self {
         let comp_config = cosmic_config::Config::new("com.system76.CosmicComp", 1).unwrap();
-        let comp_config_descale_xwayland =
-            comp_config.get("descale_xwayland").unwrap_or_else(|err| {
+        let comp_config_descale_xwayland = comp_config
+            .get("descale_xwayland")
+            .unwrap_or_else(|err| {
                 if err.is_err() {
                     error!(?err, "Failed to read config 'descale_xwayland'");
                 }
@@ -213,7 +232,7 @@ struct ViewCache {
     refresh_rate_selected: Option<usize>,
     vrr_selected: Option<usize>,
     resolution_selected: Option<usize>,
-    scale_selected: Option<usize>,
+    scale_selected: u32,
 }
 
 impl page::AutoBind<crate::pages::Message> for Page {}
@@ -221,30 +240,33 @@ impl page::AutoBind<crate::pages::Message> for Page {}
 impl page::Page<crate::pages::Message> for Page {
     fn content(
         &self,
-        sections: &mut SlotMap<section::Entity, Section<crate::pages::Message>>,
+        sections: &mut SlotMap<section::Entity, Section<crate::pages::Message>>
     ) -> Option<page::Content> {
-        Some(vec![
-            // Night light
-            // sections.insert(
-            //     Section::default()
-            //         .descriptions(vec![
-            //             text::NIGHT_LIGHT.as_str().into(),
-            //             text::NIGHT_LIGHT_AUTO.as_str().into(),
-            //             text::NIGHT_LIGHT_DESCRIPTION.as_str().into(),
-            //         ])
-            //         .view::<Page>(move |_binder, page, _section| page.night_light_view()),
-            // ),
-            // Display arrangement
-            sections.insert(display_arrangement()),
-            // Display configuration
-            sections.insert(display_configuration()),
-            // Xwayland scaling options
-            sections.insert(legacy_applications()),
-        ])
+        Some(
+            vec![
+                // Night light
+                // sections.insert(
+                //     Section::default()
+                //         .descriptions(vec![
+                //             text::NIGHT_LIGHT.as_str().into(),
+                //             text::NIGHT_LIGHT_AUTO.as_str().into(),
+                //             text::NIGHT_LIGHT_DESCRIPTION.as_str().into(),
+                //         ])
+                //         .view::<Page>(move |_binder, page, _section| page.night_light_view()),
+                // ),
+                // Display arrangement
+                sections.insert(display_arrangement()),
+                // Display configuration
+                sections.insert(display_configuration()),
+                // Xwayland scaling options
+                sections.insert(legacy_applications())
+            ]
+        )
     }
 
     fn info(&self) -> page::Info {
-        page::Info::new("display", "preferences-desktop-display-symbolic")
+        page::Info
+            ::new("display", "preferences-desktop-display-symbolic")
             .title(fl!("display"))
             .description(fl!("display", "desc"))
     }
@@ -252,7 +274,7 @@ impl page::Page<crate::pages::Message> for Page {
     #[cfg(not(feature = "test"))]
     fn on_enter(
         &mut self,
-        sender: tokio::sync::mpsc::Sender<crate::pages::Message>,
+        sender: tokio::sync::mpsc::Sender<crate::pages::Message>
     ) -> Task<crate::pages::Message> {
         self.cache.orientations = [
             fl!("orientation", "standard"),
@@ -328,7 +350,7 @@ impl page::Page<crate::pages::Message> for Page {
     #[cfg(feature = "test")]
     fn on_enter(
         &mut self,
-        _sender: tokio::sync::mpsc::Sender<crate::pages::Message>,
+        _sender: tokio::sync::mpsc::Sender<crate::pages::Message>
     ) -> Task<crate::pages::Message> {
         cosmic::task::future(async move {
             let mut randr = List::default();
@@ -397,16 +419,19 @@ impl page::Page<crate::pages::Message> for Page {
     /// Task.
     fn dialog(&self) -> Option<Element<pages::Message>> {
         self.dialog?;
-        let element = widget::dialog()
+        let element = widget
+            ::dialog()
             .title(fl!("dialog", "title"))
             .body(fl!("dialog", "change-prompt", time = self.dialog_countdown))
             .primary_action(
-                widget::button::suggested(fl!("dialog", "keep-changes"))
-                    .on_press(pages::Message::Displays(Message::DialogComplete)),
+                widget::button
+                    ::suggested(fl!("dialog", "keep-changes"))
+                    .on_press(pages::Message::Displays(Message::DialogComplete))
             )
             .secondary_action(
-                widget::button::standard(fl!("dialog", "revert-settings"))
-                    .on_press(pages::Message::Displays(Message::DialogCancel)),
+                widget::button
+                    ::standard(fl!("dialog", "revert-settings"))
+                    .on_press(pages::Message::Displays(Message::DialogCancel))
             )
             .into();
         Some(element)
@@ -455,31 +480,40 @@ impl Page {
 
             Message::Display(display) => self.set_display(display),
 
-            Message::ColorDepth(color_depth) => return self.set_color_depth(color_depth),
+            Message::ColorDepth(color_depth) => {
+                return self.set_color_depth(color_depth);
+            }
 
-            Message::ColorProfile(profile) => return self.set_color_profile(profile),
+            Message::ColorProfile(profile) => {
+                return self.set_color_profile(profile);
+            }
 
-            Message::DisplayToggle(enable) => return self.toggle_display(enable),
+            Message::DisplayToggle(enable) => {
+                return self.toggle_display(enable);
+            }
 
-            Message::Mirroring(mirroring) => match mirroring {
-                Mirroring::Disable => return self.toggle_display(true),
+            Message::Mirroring(mirroring) =>
+                match mirroring {
+                    Mirroring::Disable => {
+                        return self.toggle_display(true);
+                    }
 
-                Mirroring::Mirror(from_display) => {
-                    let Some(output) = self.list.outputs.get(self.active_display) else {
-                        return Task::none();
-                    };
+                    Mirroring::Mirror(from_display) => {
+                        let Some(output) = self.list.outputs.get(self.active_display) else {
+                            return Task::none();
+                        };
 
-                    return self.exec_randr(output, Randr::Mirror(from_display));
+                        return self.exec_randr(output, Randr::Mirror(from_display));
+                    }
+
+                    Mirroring::Project(to_display) => {
+                        let Some(output) = self.list.outputs.get(to_display) else {
+                            return Task::none();
+                        };
+
+                        return self.exec_randr(output, Randr::Mirror(self.active_display));
+                    } // Mirroring::ProjectToAll => (),
                 }
-
-                Mirroring::Project(to_display) => {
-                    let Some(output) = self.list.outputs.get(to_display) else {
-                        return Task::none();
-                    };
-
-                    return self.exec_randr(output, Randr::Mirror(self.active_display));
-                } // Mirroring::ProjectToAll => (),
-            },
 
             // Message::NightLight(night_light) => {}
             //
@@ -489,12 +523,18 @@ impl Page {
             //         text::NIGHT_LIGHT.clone().into(),
             //     ));
             // }
-            Message::Orientation(orientation) => return self.set_orientation(orientation),
+            Message::Orientation(orientation) => {
+                return self.set_orientation(orientation);
+            }
 
             Message::Pan(pan) => {
                 match pan {
-                    arrangement::Pan::Left => self.last_pan = 0.0f32.max(self.last_pan - 0.01),
-                    arrangement::Pan::Right => self.last_pan = 1.0f32.min(self.last_pan + 0.01),
+                    arrangement::Pan::Left => {
+                        self.last_pan = (0.0f32).max(self.last_pan - 0.01);
+                    }
+                    arrangement::Pan::Right => {
+                        self.last_pan = (1.0f32).min(self.last_pan + 0.01);
+                    }
                 }
 
                 return cosmic::iced::widget::scrollable::snap_to(
@@ -502,20 +542,28 @@ impl Page {
                     RelativeOffset {
                         x: self.last_pan,
                         y: 0.0,
-                    },
+                    }
                 );
             }
 
-            Message::Position(display, x, y) => return self.set_position(display, x, y),
+            Message::Position(display, x, y) => {
+                return self.set_position(display, x, y);
+            }
 
-            Message::RefreshRate(rate) => return self.set_refresh_rate(rate),
+            Message::RefreshRate(rate) => {
+                return self.set_refresh_rate(rate);
+            }
 
-            Message::VariableRefreshRate(mode) => return self.set_vrr(mode),
+            Message::VariableRefreshRate(mode) => {
+                return self.set_vrr(mode);
+            }
 
-            Message::Resolution(option) => return self.set_resolution(option),
+            Message::Resolution(option) => {
+                return self.set_resolution(option);
+            }
 
             Message::Scale(option) => {
-                self.adjusted_scale = 0;
+                self.adjusted_scale = option;
                 return self.set_scale(option);
             }
 
@@ -523,7 +571,8 @@ impl Page {
                 if self.adjusted_scale != scale {
                     self.adjusted_scale = scale;
 
-                    if let Some(option) = self.cache.scale_selected {
+                    let option = self.cache.scale_selected;
+                    {
                         return self.set_scale(option);
                     }
                 }
@@ -547,9 +596,11 @@ impl Page {
 
             Message::SetXwaylandDescaling(descale) => {
                 self.comp_config_descale_xwayland = descale;
-                if let Err(err) = self
-                    .comp_config
-                    .set("descale_xwayland", self.comp_config_descale_xwayland)
+                if
+                    let Err(err) = self.comp_config.set(
+                        "descale_xwayland",
+                        self.comp_config_descale_xwayland
+                    )
                 {
                     error!(?err, "Failed to set config 'descale_xwayland'");
                 }
@@ -559,7 +610,7 @@ impl Page {
         self.last_pan = 0.5;
         cosmic::iced::widget::scrollable::snap_to(
             self.display_arrangement_scrollable.clone(),
-            RelativeOffset { x: 0.5, y: 0.5 },
+            RelativeOffset { x: 0.5, y: 0.5 }
         )
     }
 
@@ -570,8 +621,7 @@ impl Page {
 
     /// Reloads the display list, and all information relevant to the active display.
     pub fn update_displays(&mut self, list: List) {
-        let active_display_name = self
-            .display_tabs
+        let active_display_name = self.display_tabs
             .text_remove(self.display_tabs.active())
             .unwrap_or_default();
         let mut active_tab_pos: u16 = 0;
@@ -581,9 +631,7 @@ impl Page {
         self.mirror_map = SecondaryMap::new();
         self.list = list;
 
-        let sorted_outputs = self
-            .list
-            .outputs
+        let sorted_outputs = self.list.outputs
             .iter()
             .map(|(key, output)| (&*output.name, key))
             .collect::<BTreeMap<_, _>>();
@@ -673,24 +721,20 @@ impl Page {
         self.cache.refresh_rate_selected = None;
         self.cache.vrr_selected = None;
 
-        let selected_scale = DPI_SCALES
-            .iter()
+        let selected_scale = DPI_SCALES.iter()
             .position(|scale| self.config.scale <= *scale)
             .unwrap_or(DPI_SCALES.len() - 1);
 
-        self.adjusted_scale = ((self.config.scale % 25).min(20) as f32 / 5.0).round() as u32 * 5;
-        self.cache.scale_selected = Some(if self.adjusted_scale != 0 && selected_scale > 0 {
-            selected_scale - 1
-        } else {
-            selected_scale
-        });
+        self.adjusted_scale =
+            ((((self.config.scale % 25).min(20) as f32) / 5.0).round() as u32) * 5;
+        self.cache.scale_selected = self.adjusted_scale;
+        println!("scale selected: {}", self.cache.scale_selected);
+        println!("adjusted scale: {}", self.adjusted_scale);
 
         if let Some(current_mode_id) = output.current {
-            for (mode_id, mode) in output
-                .modes
+            for (mode_id, mode) in output.modes
                 .iter()
-                .filter_map(|&id| self.list.modes.get(id).map(|m| (id, m)))
-            {
+                .filter_map(|&id| self.list.modes.get(id).map(|m| (id, m))) {
                 let refresh_rates = self.cache.modes.entry(mode.size).or_default();
 
                 refresh_rates.push(mode.refresh_rate);
@@ -705,9 +749,7 @@ impl Page {
         }
 
         for (&resolution, rates) in self.cache.modes.iter().rev() {
-            self.cache
-                .resolutions
-                .push(format!("{}x{}", resolution.0, resolution.1));
+            self.cache.resolutions.push(format!("{}x{}", resolution.0, resolution.1));
             if Some(resolution) == self.config.resolution {
                 cache_rates(&mut self.cache.refresh_rates, rates);
             }
@@ -719,7 +761,7 @@ impl Page {
                     self.cache.vrr_modes = vec![
                         fl!("vrr", "force"),
                         fl!("vrr", "auto"),
-                        fl!("vrr", "disabled"),
+                        fl!("vrr", "disabled")
                     ];
                     self.cache.vrr_selected = match state {
                         AdaptiveSyncState::Always => Some(0),
@@ -740,51 +782,51 @@ impl Page {
 
         self.mirror_menu.clear();
 
-        self.mirror_menu.insert(widget::dropdown::multi::list(
-            None,
-            vec![(fl!("mirroring", "dont"), Mirroring::Disable)],
-        ));
+        self.mirror_menu.insert(
+            widget::dropdown::multi::list(
+                None,
+                vec![(fl!("mirroring", "dont"), Mirroring::Disable)]
+            )
+        );
 
-        self.mirror_menu.insert(widget::dropdown::multi::list(
-            None,
-            self.list
-                .outputs
-                .iter()
-                .filter(|&(other_id, _)| other_id != output_id)
-                .map(|(other_id, other_output)| {
-                    (
-                        fl!("mirroring", "project", display = other_output.name.as_str()),
-                        Mirroring::Project(other_id),
-                    )
-                })
-                .collect::<Vec<_>>(),
-        ));
+        self.mirror_menu.insert(
+            widget::dropdown::multi::list(
+                None,
+                self.list.outputs
+                    .iter()
+                    .filter(|&(other_id, _)| other_id != output_id)
+                    .map(|(other_id, other_output)| {
+                        (
+                            fl!("mirroring", "project", display = other_output.name.as_str()),
+                            Mirroring::Project(other_id),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            )
+        );
 
-        self.mirror_menu.insert(widget::dropdown::multi::list(
-            None,
-            self.list
-                .outputs
-                .iter()
-                .filter(|&(other_id, _)| other_id != output_id)
-                .map(|(other_id, other_output)| {
-                    (
-                        fl!("mirroring", "mirror", display = other_output.name.as_str()),
-                        Mirroring::Mirror(other_id),
-                    )
-                })
-                .collect::<Vec<_>>(),
-        ));
+        self.mirror_menu.insert(
+            widget::dropdown::multi::list(
+                None,
+                self.list.outputs
+                    .iter()
+                    .filter(|&(other_id, _)| other_id != output_id)
+                    .map(|(other_id, other_output)| {
+                        (
+                            fl!("mirroring", "mirror", display = other_output.name.as_str()),
+                            Mirroring::Mirror(other_id),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            )
+        );
 
-        self.mirror_menu.selected = self
-            .mirror_map
-            .get(output_id)
-            .map(|id| Mirroring::Mirror(*id));
+        self.mirror_menu.selected = self.mirror_map.get(output_id).map(|id| Mirroring::Mirror(*id));
 
         self.show_display_options = self.mirror_menu.selected.is_none();
 
         if self.mirror_menu.selected.is_none() {
-            self.mirror_menu.selected = self
-                .mirror_map
+            self.mirror_menu.selected = self.mirror_map
                 .iter()
                 .find(|&(_, mirrored_id)| *mirrored_id == output_id)
                 .map(|(projected_id, _)| Mirroring::Project(projected_id));
@@ -802,15 +844,16 @@ impl Page {
 
         let mut tasks = Vec::with_capacity(2);
         tasks.push(match self.cache.orientation_selected {
-            Some(orientation) => self.set_dialog(
-                Randr::Transform(match orientation {
-                    1 => Transform::Rotate90,
-                    2 => Transform::Flipped180,
-                    3 => Transform::Flipped270,
-                    _ => Transform::Normal,
-                }),
-                &request,
-            ),
+            Some(orientation) =>
+                self.set_dialog(
+                    Randr::Transform(match orientation {
+                        1 => Transform::Rotate90,
+                        2 => Transform::Flipped180,
+                        3 => Transform::Flipped270,
+                        _ => Transform::Normal,
+                    }),
+                    &request
+                ),
             None => Task::none(),
         });
 
@@ -873,18 +916,26 @@ impl Page {
         };
 
         let mode = match output.adaptive_sync_availability {
-            Some(AdaptiveSyncAvailability::Supported) => match option {
-                0 => AdaptiveSyncState::Always,
-                1 => AdaptiveSyncState::Auto,
-                2 => AdaptiveSyncState::Disabled,
-                _ => return Task::none(),
-            },
-            Some(AdaptiveSyncAvailability::RequiresModeset) => match option {
-                0 => AdaptiveSyncState::Always,
-                1 => AdaptiveSyncState::Disabled,
-                _ => return Task::none(),
-            },
-            _ => return Task::none(),
+            Some(AdaptiveSyncAvailability::Supported) =>
+                match option {
+                    0 => AdaptiveSyncState::Always,
+                    1 => AdaptiveSyncState::Auto,
+                    2 => AdaptiveSyncState::Disabled,
+                    _ => {
+                        return Task::none();
+                    }
+                }
+            Some(AdaptiveSyncAvailability::RequiresModeset) =>
+                match option {
+                    0 => AdaptiveSyncState::Always,
+                    1 => AdaptiveSyncState::Disabled,
+                    _ => {
+                        return Task::none();
+                    }
+                }
+            _ => {
+                return Task::none();
+            }
         };
 
         self.cache.vrr_selected = Some(option);
@@ -928,17 +979,19 @@ impl Page {
     }
 
     /// Set the scale of the active display.
-    pub fn set_scale(&mut self, option: usize) -> Task<app::Message> {
+    pub fn set_scale(&mut self, scale_set: u32) -> Task<app::Message> {
         let Some(output) = self.list.outputs.get(self.active_display) else {
             return Task::none();
         };
-
+        //TODO: I put this here to see better xd
         let mut tasks = Vec::with_capacity(2);
-
-        let scale = (option * 25 + 50) as u32 + self.adjusted_scale.min(20);
-
-        self.cache.scale_selected = Some(option);
+        println!("scale set: {}", scale_set);
+        let scale = scale_set * 25 + 50 + self.adjusted_scale.min(20);
+        println!("scale: {}", scale);
+        self.cache.scale_selected = scale_set;
+        println!("scale_selected: {}", scale);
         self.config.scale = scale;
+        println!("config scale: {}", scale);
         tasks.push(self.exec_randr(output, Randr::Scale(scale)));
         Task::batch(tasks)
     }
@@ -969,9 +1022,7 @@ impl Page {
 
         // Removes the dialog if no change is being made
         if Some(request) == self.dialog {
-            tasks.push(cosmic::task::message(app::Message::from(
-                Message::DialogComplete,
-            )));
+            tasks.push(cosmic::task::message(app::Message::from(Message::DialogComplete)));
         }
 
         let name = &*output.name;
@@ -1052,8 +1103,7 @@ impl Page {
             }
 
             Randr::Toggle(enable) => {
-                task.arg(if enable { "enable" } else { "disable" })
-                    .arg(name);
+                task.arg(if enable { "enable" } else { "disable" }).arg(name);
             }
 
             Randr::Transform(transform) => {
@@ -1070,10 +1120,12 @@ impl Page {
             }
         }
 
-        tasks.push(cosmic::task::future(async move {
-            tracing::debug!(?task, "executing");
-            app::Message::from(Message::RandrResult(Arc::new(task.status().await)))
-        }));
+        tasks.push(
+            cosmic::task::future(async move {
+                tracing::debug!(?task, "executing");
+                app::Message::from(Message::RandrResult(Arc::new(task.status().await)))
+            })
+        );
         Task::batch(tasks)
     }
 }
@@ -1092,18 +1144,18 @@ pub fn display_arrangement() -> Section<crate::pages::Message> {
         .show_while::<Page>(|page| page.list.outputs.len() > 1)
         .view::<Page>(move |_binder, page, section| {
             let descriptions = &section.descriptions;
-            let cosmic::cosmic_theme::Spacing {
-                space_xxs, space_m, ..
-            } = cosmic::theme::active().cosmic().spacing;
+            let cosmic::cosmic_theme::Spacing { space_xxs, space_m, .. } = cosmic::theme
+                ::active()
+                .cosmic().spacing;
 
             column()
                 .push(
-                    text::body(&descriptions[display_arrangement_desc])
+                    text
+                        ::body(&descriptions[display_arrangement_desc])
                         .apply(container)
-                        .padding([space_xxs, space_m]),
+                        .padding([space_xxs, space_m])
                 )
-                .push({
-                    Arrangement::new(&page.list, &page.display_tabs)
+                .push({ Arrangement::new(&page.list, &page.display_tabs)
                         .on_select(|id| pages::Message::Displays(Message::Display(id)))
                         .on_pan(|pan| pages::Message::Displays(Message::Pan(pan)))
                         .on_placement(|id, x, y| {
@@ -1114,8 +1166,7 @@ pub fn display_arrangement() -> Section<crate::pages::Message> {
                         .width(Length::Shrink)
                         .direction(Direction::Horizontal(Scrollbar::new()))
                         .apply(container)
-                        .center_x(Length::Fill)
-                })
+                        .center_x(Length::Fill) })
                 .apply(container)
                 .class(cosmic::theme::Container::List)
                 .width(Length::Fill)
@@ -1157,62 +1208,67 @@ pub fn display_configuration() -> Section<crate::pages::Message> {
                         dropdown(
                             &page.cache.resolutions,
                             page.cache.resolution_selected,
-                            Message::Resolution,
-                        ),
+                            Message::Resolution
+                        )
                     ),
                     widget::settings::item(
                         &descriptions[refresh_rate],
                         dropdown(
                             &page.cache.refresh_rates,
                             page.cache.refresh_rate_selected,
-                            Message::RefreshRate,
-                        ),
-                    ),
+                            Message::RefreshRate
+                        )
+                    )
                 ];
 
                 if let Some(vrr_selected) = page.cache.vrr_selected {
-                    items.push(widget::settings::item(
-                        &descriptions[vrr],
-                        dropdown(
-                            &page.cache.vrr_modes,
-                            Some(vrr_selected),
-                            Message::VariableRefreshRate,
-                        ),
-                    ));
+                    items.push(
+                        widget::settings::item(
+                            &descriptions[vrr],
+                            dropdown(
+                                &page.cache.vrr_modes,
+                                Some(vrr_selected),
+                                Message::VariableRefreshRate
+                            )
+                        )
+                    );
                 }
-
-                items.extend(vec![
-                    widget::settings::item(
-                        &descriptions[scale],
-                        dropdown(&DPI_SCALE_LABELS, page.cache.scale_selected, Message::Scale),
-                    ),
-                    widget::settings::item(
-                        &descriptions[additional_scale_options],
-                        widget::spin_button(
-                            format!("{}%", page.adjusted_scale),
-                            page.adjusted_scale,
-                            5,
-                            0,
-                            20,
-                            Message::AdjustScale,
+                println!("cached scale(for showing the slider): {}:", page.adjusted_scale);
+                items.extend(
+                    vec![
+                        widget::settings::item(
+                            &descriptions[scale],
+                            widget::slider(0..=10, page.adjusted_scale, Message::Scale)
+                            //dropdown(&DPI_SCALE_LABELS, page.cache.scale_selected, Message::Scale),
                         ),
-                    ),
-                    widget::settings::item(
-                        &descriptions[orientation],
-                        dropdown(
-                            &page.cache.orientations,
-                            page.cache.orientation_selected,
-                            |id| {
-                                Message::Orientation(match id {
-                                    0 => Transform::Normal,
-                                    1 => Transform::Rotate90,
-                                    2 => Transform::Rotate180,
-                                    _ => Transform::Rotate270,
-                                })
-                            },
+                        widget::settings::item(
+                            &descriptions[additional_scale_options],
+                            widget::spin_button(
+                                format!("{}%", page.adjusted_scale),
+                                page.adjusted_scale,
+                                5,
+                                0,
+                                20,
+                                Message::AdjustScale
+                            )
                         ),
-                    ),
-                ]);
+                        widget::settings::item(
+                            &descriptions[orientation],
+                            dropdown(
+                                &page.cache.orientations,
+                                page.cache.orientation_selected,
+                                |id| {
+                                    Message::Orientation(match id {
+                                        0 => Transform::Normal,
+                                        1 => Transform::Rotate90,
+                                        2 => Transform::Rotate180,
+                                        _ => Transform::Rotate270,
+                                    })
+                                }
+                            )
+                        )
+                    ]
+                );
 
                 items
             });
@@ -1220,32 +1276,34 @@ pub fn display_configuration() -> Section<crate::pages::Message> {
             let mut content = column().spacing(theme.cosmic().space_xs());
 
             if page.list.outputs.len() > 1 {
-                let display_switcher = tab_bar::horizontal(&page.display_tabs)
+                let display_switcher = tab_bar
+                    ::horizontal(&page.display_tabs)
                     .button_alignment(Alignment::Center)
                     .on_activate(Message::Display);
 
-                let mut display_enable = (page
-                    // Don't allow disabling display if it's the only active
-                    .list
-                    .outputs
-                    .values()
-                    .filter(|display| display.enabled)
-                    .count()
-                    > 1
-                    || !active_output.enabled)
+                let mut display_enable = (
+                    page.list.outputs // Don't allow disabling display if it's the only active
+                        .values()
+                        .filter(|display| display.enabled)
+                        .count() > 1 || !active_output.enabled
+                )
                     .then(|| {
                         list_column()
-                            .add(widget::settings::item(
-                                &descriptions[enable_label],
-                                toggler(active_output.enabled).on_toggle(Message::DisplayToggle),
-                            ))
-                            .add(widget::settings::item(
-                                &descriptions[mirroring_label],
-                                widget::dropdown::multi::dropdown(
-                                    &page.mirror_menu,
-                                    Message::Mirroring,
-                                ),
-                            ))
+                            .add(
+                                widget::settings::item(
+                                    &descriptions[enable_label],
+                                    toggler(active_output.enabled).on_toggle(Message::DisplayToggle)
+                                )
+                            )
+                            .add(
+                                widget::settings::item(
+                                    &descriptions[mirroring_label],
+                                    widget::dropdown::multi::dropdown(
+                                        &page.mirror_menu,
+                                        Message::Mirroring
+                                    )
+                                )
+                            )
                     })
                     .unwrap_or_else(list_column);
 
@@ -1257,15 +1315,15 @@ pub fn display_configuration() -> Section<crate::pages::Message> {
 
                 content = content.push(display_switcher).push(display_enable);
             } else {
-                content = content
-                    .push(text::heading(&descriptions[options_label]))
-                    .push_maybe(display_options.map(|items| {
+                content = content.push(text::heading(&descriptions[options_label])).push_maybe(
+                    display_options.map(|items| {
                         let mut column = list_column();
                         for item in items {
                             column = column.add(item);
                         }
                         column
-                    }));
+                    })
+                );
             }
 
             content.apply(Element::from).map(pages::Message::Displays)
@@ -1285,28 +1343,45 @@ pub fn legacy_applications() -> Section<crate::pages::Message> {
         .descriptions(descriptions)
         .view::<Page>(move |_binder, page, section| {
             let descriptions = &section.descriptions;
-            widget::settings::section()
+            widget::settings
+                ::section()
                 .title(&section.title)
-                .add(widget::settings::item_row(vec![widget::radio(
-                    widget::column()
-                        .push(text::body(&descriptions[system]))
-                        .push(text::caption(&descriptions[system_desc])),
-                    false,
-                    Some(page.comp_config_descale_xwayland),
-                    Message::SetXwaylandDescaling,
+                .add(
+                    widget::settings::item_row(
+                        vec![
+                            widget
+                                ::radio(
+                                    widget
+                                        ::column()
+                                        .push(text::body(&descriptions[system]))
+                                        .push(text::caption(&descriptions[system_desc])),
+                                    false,
+                                    Some(page.comp_config_descale_xwayland),
+                                    Message::SetXwaylandDescaling
+                                )
+                                .width(Length::Fill)
+                                .into()
+                        ]
+                    )
                 )
-                .width(Length::Fill)
-                .into()]))
-                .add(widget::settings::item_row(vec![widget::radio(
-                    widget::column()
-                        .push(text::body(&descriptions[native]))
-                        .push(text::caption(&descriptions[native_desc])),
-                    true,
-                    Some(page.comp_config_descale_xwayland),
-                    Message::SetXwaylandDescaling,
+                .add(
+                    widget::settings::item_row(
+                        vec![
+                            widget
+                                ::radio(
+                                    widget
+                                        ::column()
+                                        .push(text::body(&descriptions[native]))
+                                        .push(text::caption(&descriptions[native_desc])),
+                                    true,
+                                    Some(page.comp_config_descale_xwayland),
+                                    Message::SetXwaylandDescaling
+                                )
+                                .width(Length::Fill)
+                                .into()
+                        ]
+                    )
                 )
-                .width(Length::Fill)
-                .into()]))
                 .apply(Element::from)
                 .map(crate::pages::Message::Displays)
         })
@@ -1317,7 +1392,7 @@ fn cache_rates(cached_rates: &mut Vec<String>, rates: &[u32]) {
 
     #[inline]
     fn round(rate: &u32) -> u32 {
-        (*rate as f32 / 1000.0).round() as u32
+        ((*rate as f32) / 1000.0).round() as u32
     }
 
     #[inline]
@@ -1335,23 +1410,23 @@ fn cache_rates(cached_rates: &mut Vec<String>, rates: &[u32]) {
             (None, None) => cached_rates.push(format!("{} Hz", round(rate))),
             (None, Some(next)) => {
                 if round(rate) == round(next) {
-                    cached_rates.push(format_dec(rate))
+                    cached_rates.push(format_dec(rate));
                 } else {
-                    cached_rates.push(format!("{} Hz", round(rate)))
+                    cached_rates.push(format!("{} Hz", round(rate)));
                 }
             }
             (Some(prev), None) => {
                 if round(rate) == round(prev) {
-                    cached_rates.push(format_dec(rate))
+                    cached_rates.push(format_dec(rate));
                 } else {
-                    cached_rates.push(format!("{} Hz", round(rate)))
+                    cached_rates.push(format!("{} Hz", round(rate)));
                 }
             }
             (Some(prev), Some(next)) => {
                 if round(rate) == round(prev) || round(rate) == round(next) {
-                    cached_rates.push(format_dec(rate))
+                    cached_rates.push(format_dec(rate));
                 } else {
-                    cached_rates.push(format!("{} Hz", round(rate)))
+                    cached_rates.push(format!("{} Hz", round(rate)));
                 }
             }
         }
