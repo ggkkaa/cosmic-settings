@@ -1241,7 +1241,7 @@ pub fn display_configuration() -> Section<crate::pages::Message> {
                             widget::slider(0..=10, page.adjusted_scale, Message::Scale)
                             //dropdown(&DPI_SCALE_LABELS, page.cache.scale_selected, Message::Scale),
                         ),
-                        widget::settings::item(
+                        /*widget::settings::item(
                             &descriptions[additional_scale_options],
                             widget::spin_button(
                                 format!("{}%", page.adjusted_scale),
@@ -1251,7 +1251,7 @@ pub fn display_configuration() -> Section<crate::pages::Message> {
                                 20,
                                 Message::AdjustScale
                             )
-                        ),
+                        ),*/
                         widget::settings::item(
                             &descriptions[orientation],
                             dropdown(
